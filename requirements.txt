@@ -1,0 +1,8 @@
+# Core web app frameworks
+# gradio
+
+# Discord bot
+discord.py
+
+# Utilities
+python-dotenv
