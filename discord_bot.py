@@ -37,9 +37,9 @@ async def clear_global_commands(tree: discord.app_commands.CommandTree):
 
 @bot.tree.command(name="image", description="Upload an image for description", guild=guild)
 async def image(interaction: discord.Interaction, attachment: discord.Attachment):
-    # Save image locally
     await interaction.response.defer(thinking=False, ephemeral=False)
 
+    # Save image locally
     try:
         file_path = os.path.join(file_loc, "images", attachment.filename)
         await attachment.save(file_path)
@@ -53,7 +53,25 @@ async def image(interaction: discord.Interaction, attachment: discord.Attachment
         return
 
     # Split messages if too long
-    chunks = split_into_chunks(caption)
+    chunks = split_into_chunks(caption or "")
+
+    # Prepare a small image preview by attaching the saved file and using an embed.
+    # Send the first chunk together with the attached image so the user sees the image being described.
+    if chunks:
+        first_chunk = chunks.pop(0)
+    else:
+        first_chunk = "(No description generated.)"
+
+    try:
+        preview_file = discord.File(file_path, filename=attachment.filename)
+        embed = discord.Embed(title="Image preview")
+        embed.set_image(url=f"attachment://{attachment.filename}")
+        await interaction.followup.send(first_chunk, file=preview_file, embed=embed)
+    except Exception:
+        # If attaching the file fails for any reason, still send the first chunk as text.
+        await interaction.followup.send(first_chunk)
+
+    # Send remaining chunks (if any) as plain followups
     for chunk in chunks:
         await interaction.followup.send(chunk)
 
