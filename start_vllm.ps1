@@ -1,6 +1,3 @@
-# set HF_TOKEN=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
-# $env:HF_TOKEN
-# --model google/gemma-3-4b-it-qat-q4_0-gguf
 docker run --runtime nvidia --gpus all --name gemma_container -v F:\Studies\hface_cache:/models `
     -p 8000:8000 --ipc=host `
     vllm/vllm-openai:latest `
