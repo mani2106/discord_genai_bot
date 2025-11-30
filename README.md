@@ -22,7 +22,7 @@ Lightweight Discord bot that accepts an uploaded image, sends it to a local vLLM
 - uv (optional, for faster setup)
 - Environment variables: `DISCORD_TOKEN` and `GUILD_ID` (see below)
 
-The Python dependencies are in `requirements.txt`. At minimum this project uses:
+The Full Python dependencies are in `requirements.txt`. At minimum this project uses:
 
 - discord.py
 - python-dotenv
@@ -149,9 +149,7 @@ Key implementation notes:
 Use this link https://discord.com/oauth2/authorize?client_id=1444320985972084938 and give the permissions, install on a test server and give the `GUILD_ID` and `DISCORD_TOKEN`
 
 
-## Security and operational notes
-
-- Keep your Discord token secret and never commit `.env` to source control.
+## Notes
 - If running the Docker container with GPUs, ensure Docker has GPU access configured (NVIDIA Container Toolkit).
 - Port 8000 must be free on the host for the vLLM server.
 - The default code uses `api_key="EMPTY"` for the local vLLM; if you secure your vLLM server, update `image_cap_flow/discord_img_llm.py` with the key.
@@ -161,8 +159,6 @@ Use this link https://discord.com/oauth2/authorize?client_id=1444320985972084938
 - Bot commands are set to only work in a single server (configured by `GUILD_ID`) can be expanded to global if needed.
 - "Bot doesn't respond / commands not registered": ensure `GUILD_ID` is set and the bot has permission to register commands for that guild. Check the bot logs for sync errors.
 - The configured context window in vLLM, can only support 2 or 3 roundabouts before filling up the context window, context can be increased in `--max-model-len` argument.
-- "vLLM container fails to start": check the container logs (`docker logs <container>`) and verify the model path and host mounts. GPU errors usually indicate driver or Docker runtime misconfiguration.
-- "Slow responses": CPU-only inference will be slow for large models. Use a smaller model or enable GPU.
 
 ## Where to look in the code
 
