@@ -2,9 +2,14 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
-import os
+import os, asyncio
+from image_cap_flow import discord_img_llm as img_llm
 
 load_dotenv()
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+guild = os.getenv("GUILD_ID")
+guild = discord.Object(id=int(guild))
 
 # --- Setup ---
 intents = discord.Intents.default()
@@ -18,50 +23,84 @@ def setup_filestore():
     os.makedirs(os.path.join(file_loc, "docs"), exist_ok=True)
     os.makedirs(os.path.join(file_loc, "embeds"), exist_ok=True)
 
+def split_into_chunks(text: str, limit: int = 2000) -> list[str]:
+    """Split text into chunks of at most `limit` characters."""
+    return [text[i:i+limit] for i in range(0, len(text), limit)]
 
-# --- Example RAG pipeline (stub) ---
-def rag_query(query: str) -> str:
-    # TODO: Embed query, retrieve docs, run LLM
-    return f"RAG answer for: {query}"
+async def clear_global_commands(tree: discord.app_commands.CommandTree):
+    # Remove all global commands from the local tree
+    for cmd in list(tree.get_commands()):  # global commands only
+        tree.remove_command(cmd.name)      # removes global variant
 
-# --- Example Vision pipeline (stub) ---
-def describe_image(file_path: str) -> str:
-    # TODO: Load BLIP/CLIP model, generate caption
-    return f"Description of uploaded image at {file_path}"
+    # Sync globally to push the cleared state
+    await tree.sync()  # global sync (propagates with delay)
 
-# --- Commands ---
-@bot.tree.command(name="ask", description="Ask a question (RAG)")
-async def ask(interaction: discord.Interaction, query: str):
-    answer = rag_query(query)
-    await interaction.response.send_message(answer)
-
-@bot.tree.command(name="image", description="Upload an image for description")
+@bot.tree.command(name="image", description="Upload an image for description", guild=guild)
 async def image(interaction: discord.Interaction, attachment: discord.Attachment):
     # Save image locally
-    file_path = os.path.join(file_loc, "images", attachment.filename)
-    await attachment.save(file_path)
+    await interaction.response.defer(thinking=False, ephemeral=False)
 
-    caption = describe_image(file_path)
-    await interaction.response.send_message(caption)
+    try:
+        file_path = os.path.join(file_loc, "images", attachment.filename)
+        await attachment.save(file_path)
 
-@bot.tree.command(name="help", description="Show usage instructions")
+        # Start a conversation for this user with the uploaded image (runs in thread)
+        session_id = str(interaction.user.id)
+        # caption = await asyncio.to_thread(img_llm.start_conversation_with_image, session_id, file_path)
+        caption = await asyncio.to_thread(img_llm.start_conversation_with_image, session_id, file_path)
+    except Exception as e:
+        await interaction.followup.send(f"Processing failed: {e}")
+        return
+
+    # Split messages if too long
+    chunks = split_into_chunks(caption)
+    for chunk in chunks:
+        await interaction.followup.send(chunk)
+
+
+@bot.tree.command(name="img_ask", description="Ask follow-up questions about the last uploaded image", guild=guild)
+async def img_ask(interaction: discord.Interaction, query: str):
+    # Defer the interaction so we can use followup.send() safely
+    await interaction.response.defer(thinking=True)
+
+    session_id = str(interaction.user.id)
+    try:
+        answer = await asyncio.to_thread(img_llm.ask, session_id, query)
+    except Exception as e:
+        await interaction.followup.send(f"Processing failed: {e}")
+        return
+
+    # Split messages if too long
+    chunks = split_into_chunks(answer)
+    for chunk in chunks:
+        await interaction.followup.send(chunk)
+
+@bot.tree.command(name="img_clear", description="Clear stored image/context for your session", guild=guild)
+async def img_clear(interaction: discord.Interaction):
+    session_id = str(interaction.user.id)
+    await asyncio.to_thread(img_llm.clear, session_id)
+    await interaction.response.send_message("Image/context cleared.")
+
+@bot.tree.command(name="help", description="Show usage instructions", guild=guild)
 async def help_cmd(interaction: discord.Interaction):
     help_text = (
         "**Bot Commands:**\n"
-        "• `/ask <query>` — Retrieve answers from knowledge base (RAG)\n"
         "• `/image <upload>` — Describe or tag an uploaded image\n"
         "• `/help` — Show this message\n"
         "• `/show_files` — Show uploaded files\n"
         "• `/ping` — Test command will always reply 'pong'\n"
+        "**Image Follow-up Commands:**\n"
+        "• `/img_ask <query>` — Ask follow-up questions about the last uploaded image\n"
+        "• `/img_clear` — Clear stored image/context for your session\n"
     )
     await interaction.response.send_message(help_text)
 
-@bot.tree.command(name="ping", description="Check bot responsiveness")
+@bot.tree.command(name="ping", description="Check bot responsiveness", guild=guild)
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!")
 
 # command to show files uploaded by users
-@bot.tree.command(name="show_files", description="Show uploaded files")
+@bot.tree.command(name="show_files", description="Show uploaded files", guild=guild)
 async def show_files(interaction: discord.Interaction):
     files = []
     for root, dirs, filenames in os.walk(file_loc):
@@ -74,12 +113,12 @@ async def show_files(interaction: discord.Interaction):
         await interaction.response.send_message("No files uploaded yet.")
 
 # --- Run Bot ---
-TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = os.getenv("GUILD_ID")  # Replace with your guild ID
 
 @bot.event
 async def on_ready():
-    guild = discord.Object(id=int(GUILD_ID))
+    guild = os.getenv("GUILD_ID")
+    guild = discord.Object(id=int(guild))
+    # await clear_global_commands(bot.tree)
     await bot.tree.sync(guild=guild)
     setup_filestore()
     print(f"Logged in as {bot.user}")
