@@ -10,3 +10,8 @@ wheels/
 .venv
 filestore
 .env
+_bmad/
+.github/
+test_images/
+texts/
+.kiro/

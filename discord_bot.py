@@ -4,6 +4,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 import os, asyncio
 from image_cap_flow import discord_img_llm as img_llm
+from rag_system.rag_system import DiscordRAGSystem
 
 load_dotenv()
 
@@ -22,6 +23,30 @@ def setup_filestore():
     os.makedirs(os.path.join(file_loc, "images"), exist_ok=True)
     os.makedirs(os.path.join(file_loc, "docs"), exist_ok=True)
     os.makedirs(os.path.join(file_loc, "embeds"), exist_ok=True)
+
+# Initialize RAG system
+rag_system = None
+
+def init_rag_system():
+    """Initialize the RAG system."""
+    global rag_system
+    try:
+        # Check if required environment variables are set
+        required_env_vars = ['OPENROUTER_API_KEY', 'OPENROUTER_API_BASE', 'OPENROUTER_MODEL', 'OPENROUTER_EMBED_MODEL']
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+
+        if missing_vars:
+            print(f"Warning: Missing environment variables for RAG system: {', '.join(missing_vars)}")
+            print("RAG commands will not be available until these are configured.")
+            rag_system = None
+            return
+
+        rag_system = DiscordRAGSystem(storage_path=file_loc)
+        print("RAG system initialized successfully")
+    except Exception as e:
+        print(f"Failed to initialize RAG system: {e}")
+        print("RAG commands will not be available.")
+        rag_system = None
 
 def split_into_chunks(text: str, limit: int = 2000) -> list[str]:
     """Split text into chunks of at most `limit` characters."""
@@ -110,6 +135,12 @@ async def help_cmd(interaction: discord.Interaction):
         "**Image Follow-up Commands:**\n"
         "• `/img_ask <query>` — Ask follow-up questions about the last uploaded image\n"
         "• `/img_clear` — Clear stored image/context for your session\n"
+        "**Document RAG Commands:**\n"
+        "• `/upload_doc <file>` — Upload a text document for AI querying\n"
+        "• `/ask_docs <query>` — Ask questions about your uploaded documents\n"
+        "• `/list_docs` — Show your uploaded documents\n"
+        "• `/clear_docs` — Clear all your uploaded documents\n"
+        "• `/rag_status` — Show RAG system status\n"
     )
     await interaction.response.send_message(help_text)
 
@@ -130,6 +161,155 @@ async def show_files(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("No files uploaded yet.")
 
+# --- RAG System Commands ---
+
+@bot.tree.command(name="upload_doc", description="Upload a text document for RAG processing", guild=guild)
+async def upload_doc(interaction: discord.Interaction, attachment: discord.Attachment):
+    """Upload and process a text document for RAG querying."""
+    await interaction.response.defer(thinking=True, ephemeral=False)
+
+    if rag_system is None:
+        await interaction.followup.send("❌ RAG system is not available. Please contact an administrator.")
+        return
+
+    # Validate file type
+    allowed_extensions = {'.txt', '.md', '.text'}
+    file_extension = os.path.splitext(attachment.filename)[1].lower()
+
+    if file_extension not in allowed_extensions:
+        await interaction.followup.send(
+            f"❌ **Unsupported file type: {file_extension}**\n\n"
+            f"Supported formats: {', '.join(allowed_extensions)}\n"
+            f"Please upload a text file in one of the supported formats."
+        )
+        return
+
+    # Check file size (limit to 10MB)
+    max_size = 10 * 1024 * 1024  # 10MB in bytes
+    if attachment.size > max_size:
+        await interaction.followup.send(
+            f"❌ **File too large: {attachment.size / (1024*1024):.1f}MB**\n\n"
+            f"Maximum file size: {max_size / (1024*1024):.0f}MB\n"
+            f"Please upload a smaller file."
+        )
+        return
+
+    try:
+        # Create user-specific directory
+        user_id = str(interaction.user.id)
+        user_doc_dir = os.path.join(file_loc, "docs", user_id)
+        os.makedirs(user_doc_dir, exist_ok=True)
+
+        # Save file locally
+        file_path = os.path.join(user_doc_dir, attachment.filename)
+        await attachment.save(file_path)
+
+        # Process with RAG system
+        result = await rag_system.process_file_upload(file_path, attachment.filename, user_id)
+
+        # Split response if too long
+        chunks = split_into_chunks(result)
+        for chunk in chunks:
+            await interaction.followup.send(chunk)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ **Processing failed:** {str(e)}")
+
+@bot.tree.command(name="ask_docs", description="Ask questions about uploaded documents", guild=guild)
+async def ask_docs(interaction: discord.Interaction, query: str):
+    """Query the uploaded documents and get AI-generated responses."""
+    await interaction.response.defer(thinking=True, ephemeral=False)
+
+    if rag_system is None:
+        await interaction.followup.send("❌ RAG system is not available. Please contact an administrator.")
+        return
+
+    # Validate query length
+    if len(query.strip()) < 3:
+        await interaction.followup.send(
+            "❌ **Query too short**\n\n"
+            "Please provide a more detailed question (at least 3 characters)."
+        )
+        return
+
+    if len(query) > 500:
+        await interaction.followup.send(
+            "❌ **Query too long**\n\n"
+            "Please keep your question under 500 characters."
+        )
+        return
+
+    try:
+        user_id = str(interaction.user.id)
+
+        # Process query
+        result = await rag_system.query_documents(query, user_id)
+
+        # Split response if too long
+        chunks = split_into_chunks(result)
+        for chunk in chunks:
+            await interaction.followup.send(chunk)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ **Query failed:** {str(e)}")
+
+@bot.tree.command(name="clear_docs", description="Clear all uploaded documents for your account", guild=guild)
+async def clear_docs(interaction: discord.Interaction):
+    """Clear all uploaded documents for the user."""
+    if rag_system is None:
+        await interaction.response.send_message("❌ RAG system is not available. Please contact an administrator.")
+        return
+
+    try:
+        user_id = str(interaction.user.id)
+        result = rag_system.clear_user_documents(user_id)
+        await interaction.response.send_message(result)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ **Clear failed:** {str(e)}")
+
+@bot.tree.command(name="list_docs", description="Show your uploaded documents", guild=guild)
+async def list_docs(interaction: discord.Interaction):
+    """List all uploaded documents for the user."""
+    if rag_system is None:
+        await interaction.response.send_message("❌ RAG system is not available. Please contact an administrator.")
+        return
+
+    try:
+        user_id = str(interaction.user.id)
+        result = rag_system.list_user_documents(user_id)
+
+        # Split response if too long
+        chunks = split_into_chunks(result)
+        await interaction.response.send_message(chunks[0])
+
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ **List failed:** {str(e)}")
+
+@bot.tree.command(name="rag_status", description="Show RAG system status (admin)", guild=guild)
+async def rag_status(interaction: discord.Interaction):
+    """Show RAG system status information."""
+    if rag_system is None:
+        await interaction.response.send_message(
+            "❌ **RAG System Unavailable**\n\n"
+            "The RAG system failed to initialize. This could be due to:\n"
+            "• Missing OpenRouter API configuration\n"
+            "• Invalid API credentials\n"
+            "• Network connectivity issues\n\n"
+            "Please contact an administrator."
+        )
+        return
+
+    try:
+        result = rag_system.get_system_status()
+        await interaction.response.send_message(result)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ **Status check failed:** {str(e)}")
+
 # --- Run Bot ---
 
 @bot.event
@@ -139,6 +319,7 @@ async def on_ready():
     # await clear_global_commands(bot.tree)
     await bot.tree.sync(guild=guild)
     setup_filestore()
+    init_rag_system()
     print(f"Logged in as {bot.user}")
 
 bot.run(TOKEN)
