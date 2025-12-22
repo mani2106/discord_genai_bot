@@ -10,3 +10,10 @@ wheels/
 .venv
 filestore
 .env
+_bmad/
+.kiro/
+.github/
+test_images/
+texts/
+image_cap_flow/simple_img_cap.py
+image_cap_flow/test_summary.py
