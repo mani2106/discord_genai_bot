@@ -1,12 +1,12 @@
 ## Demo
 
 Here's a quick demonstration of the bot in action:
+(full demo in demo/comp.mp4)
 
-<p align="center">
-  <video src="demo/comp.mp4" width="800" controls>
-    Your browser does not support the video tag.
-  </video>
-</p>
+https://github.com/user-attachments/assets/36cf62ee-34a8-4eab-85af-5471a7d4e545
+
+
+
 
 # discord-genai-bot
 
