@@ -9,8 +9,67 @@ from llama_index.llms.openai_like import OpenAILike
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.llms import LLM
+import requests
+import json
 
 from .config import OpenRouterConfig
+
+
+class OpenRouterBgeM3Embedder(BaseEmbedding):
+    """
+    LlamaIndex-compatible embedding class for bge-m3 via OpenRouter API.
+    """
+
+    # Declare fields for Pydantic
+    api_key: str
+    site_url: Optional[str] = None
+    site_name: Optional[str] = None
+
+    base_url: str = "https://openrouter.ai/api/v1/embeddings"
+
+    def _post(self, inputs: List[str], encoding_format: str = "float") -> dict:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        if self.site_url:
+            headers["HTTP-Referer"] = self.site_url
+        if self.site_name:
+            headers["X-Title"] = self.site_name
+
+        payload = {
+            "model": self.model_name,
+            "input": inputs,
+            "encoding_format": encoding_format,
+        }
+
+        response = requests.post(self.base_url, headers=headers, data=json.dumps(payload))
+        response.raise_for_status()
+        return response.json()
+
+    def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
+        result = self._post(texts)
+        return [item["embedding"] for item in result["data"]]
+
+    # --- Required abstract methods (sync) ---
+    def _get_query_embedding(self, query: str) -> List[float]:
+        return self._get_embeddings([query])[0]
+
+    def _get_text_embedding(self, text: str) -> List[float]:
+        return self._get_embeddings([text])[0]
+
+    def _get_text_embeddings(self, texts: List[str]) -> List[List[float]]:
+        return self._get_embeddings(texts)
+
+    # --- Required abstract methods (async) ---
+    async def _aget_query_embedding(self, query: str) -> List[float]:
+        return self._get_query_embedding(query)
+
+    async def _aget_text_embedding(self, text: str) -> List[float]:
+        return self._get_text_embedding(text)
+
+    async def _aget_text_embeddings(self, texts: List[str]) -> List[List[float]]:
+        return self._get_text_embeddings(texts)
 
 
 class OpenRouterLLMIntegration:
@@ -50,12 +109,17 @@ class OpenRouterLLMIntegration:
             BaseEmbedding: Configured OpenRouter embedding model
         """
         if self._embedding_model is None:
-            self._embedding_model = OpenAIEmbedding(
-                model=self.config.embedding_model,
-                api_base=self.config.api_base + "v1",
+            # self._embedding_model = OpenAIEmbedding(
+            #     model=self.config.embedding_model,
+            #     api_base=self.config.api_base + "v1",
+            #     api_key=self.config.api_key,
+            #     embed_batch_size=10,
+            #     max_retries=3
+            # )
+            self._embedding_model = OpenRouterBgeM3Embedder(
                 api_key=self.config.api_key,
-                embed_batch_size=10,
-                max_retries=3
+                embed_batch_size=5,
+                model_name="baai/bge-m3"
             )
         return self._embedding_model
 
