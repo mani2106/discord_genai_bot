@@ -1,3 +1,13 @@
+## Demo
+
+Here's a quick demonstration of the bot in action:
+
+<p align="center">
+  <video src="demo/comp.mp4" width="800" controls>
+    Your browser does not support the video tag.
+  </video>
+</p>
+
 # discord-genai-bot
 
 Lightweight Discord bot that accepts an uploaded image, sends it to a local vLLM instance via an OpenAI-compatible API, and returns a concise description + tags. The multimodal logic lives in `image_cap_flow/discord_img_llm.py` and the Discord integration is in `discord_bot.py`.
